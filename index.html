@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f6f5f0" />
+    <meta name="description" content="八个小组，一点记分。自动保存、并列排名、轻松核对每天的记录。" />
+    <title>八组计分板</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./updates.css" />
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand" aria-label="八组计分板">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+          <span>八组计分板</span>
+        </div>
+        <div class="topbar-right">
+          <span class="save-status"><span class="status-dot"></span>本机自动保存</span>
+          <button class="icon-button" id="data-button" type="button" aria-label="数据备份与恢复" title="数据备份与恢复">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="M7 4v6h10V4M8 16h8"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero" aria-labelledby="page-title">
+          <div class="hero-main">
+            <h1 id="page-title">班级日常计分</h1>
+          </div>
+          <div class="hero-date" aria-label="今天的日期">
+            <span>今天是</span>
+            <strong id="today-label">—</strong>
+            <small id="weekday-label">—</small>
+          </div>
+        </section>
+
+        <nav class="tabs" aria-label="页面导航">
+          <button class="tab is-active" type="button" data-tab="score" aria-current="page">计分板 <span class="tab-count">8</span></button>
+          <button class="tab" type="button" data-tab="ranking">排名</button>
+          <button class="tab" type="button" data-tab="history">历史记录</button>
+        </nav>
+
+        <section class="page is-visible" id="score-page" aria-labelledby="score-heading">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">01 / QUICK SCORE</p>
+              <h2 id="score-heading">今日计分</h2>
+            </div>
+            <button class="secondary-button undo-button" id="undo-button" type="button" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h9a7 7 0 0 1 0 14h-1"/></svg>
+              撤销上一笔
+            </button>
+          </div>
+
+          <div class="score-mode-bar" role="group" aria-label="记分模式">
+            <button class="mode-button is-selected" type="button" data-mode="group" aria-pressed="true">集体加分</button>
+            <button class="mode-button" type="button" data-mode="individual" aria-pressed="false">精细模式</button>
+          </div>
+
+          <div class="score-layout">
+            <div class="team-grid" id="team-grid"></div>
+            <aside class="ranking-panel" aria-labelledby="side-ranking-title">
+              <div class="panel-header"><div><span class="panel-kicker">LIVE RANKING</span><h3 id="side-ranking-title">实时排名</h3></div><span class="live-pill"><span></span>实时</span></div>
+              <div class="ranking-list" id="side-ranking-list"></div>
+              <button class="text-link" type="button" data-go="ranking">查看完整排名 <span aria-hidden="true">↗</span></button>
+              <div class="panel-note"><span aria-hidden="true">✦</span> 分数相同的小组并列排名。</div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="page" id="ranking-page" aria-labelledby="ranking-heading" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">02 / RANKING</p>
+              <h2 id="ranking-heading">小组排名</h2>
+            </div>
+          </div>
+          <div class="full-ranking-card">
+            <div class="full-ranking-head"><span>名次</span><span>小组</span><span>今日</span><span>累计</span></div>
+            <div id="full-ranking-list"></div>
+          </div>
+        </section>
+
+        <section class="page" id="history-page" aria-labelledby="history-heading" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">03 / ACTIVITY LOG</p>
+              <h2 id="history-heading">历史记录</h2>
+            </div>
+            <label class="date-picker">查看日期 <input type="date" id="history-date" /></label>
+          </div>
+          <div class="history-card">
+            <div class="history-summary" id="history-summary"></div>
+            <div class="history-list" id="history-list"></div>
+          </div>
+        </section>
+      </main>
+      <footer class="footer"><span>八组计分板 <span class="footer-star">✳</span> 让记分简单一点</span><span>数据保存在当前浏览器</span></footer>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <dialog class="modal" id="name-dialog" aria-labelledby="name-dialog-title">
+      <form method="dialog" id="name-form" class="modal-content">
+        <div class="modal-icon">✎</div><h2 id="name-dialog-title">给小组取个名字</h2><p>每个小组都可以用自己的名字。</p>
+        <label for="team-name-input">小组名称</label><input id="team-name-input" type="text" maxlength="20" autocomplete="off" required />
+        <div class="modal-actions"><button type="button" class="secondary-button" data-close="name-dialog">取消</button><button type="submit" class="primary-button">保存名称</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="points-dialog" aria-labelledby="points-dialog-title">
+      <form method="dialog" id="points-form" class="modal-content">
+        <div class="modal-icon" id="points-dialog-icon">＋</div><h2 id="points-dialog-title">加多分</h2><p id="points-dialog-hint">一次记录更多分数。</p>
+        <label for="points-input">分值</label><input id="points-input" type="number" min="1" max="999" step="1" inputmode="numeric" value="7" required />
+        <div class="modal-actions"><button type="button" class="secondary-button" data-close="points-dialog">取消</button><button type="submit" class="primary-button">确认记分</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="roster-dialog" aria-labelledby="roster-dialog-title">
+      <form method="dialog" id="roster-form" class="modal-content">
+        <div class="modal-icon">☰</div><h2 id="roster-dialog-title">设置小组名单</h2>
+        <p id="roster-dialog-hint">每行填写一位同学。</p>
+        <label for="roster-input">同学姓名</label><textarea id="roster-input" rows="9" placeholder="每行一位同学"></textarea>
+        <div class="modal-actions"><button type="button" class="secondary-button" data-close="roster-dialog">取消</button><button type="submit" class="primary-button">保存名单</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="edit-dialog" aria-labelledby="edit-dialog-title">
+      <form method="dialog" id="edit-form" class="modal-content">
+        <div class="modal-icon">✎</div><h2 id="edit-dialog-title">修改记录</h2><p id="edit-dialog-hint">修改这笔分数。</p>
+        <div class="segmented" role="group" aria-label="加分或减分"><button type="button" class="is-selected" data-edit-sign="plus">加分</button><button type="button" data-edit-sign="minus">减分</button></div>
+        <label for="edit-points-input">分值</label><input id="edit-points-input" type="number" min="1" max="999" step="1" inputmode="numeric" required />
+        <div class="modal-actions"><button type="button" class="secondary-button" data-close="edit-dialog">取消</button><button type="submit" class="primary-button">保存修改</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="data-dialog" aria-labelledby="data-dialog-title">
+      <div class="modal-content">
+        <div class="modal-icon">↧</div><h2 id="data-dialog-title">数据备份与恢复</h2><p>分数只保存在当前浏览器。建议定期下载备份，换设备时可导入。</p>
+        <div class="data-actions"><button class="primary-button" type="button" id="export-button">下载备份文件</button><button class="secondary-button" type="button" id="import-button">导入备份文件</button><input id="import-input" type="file" accept="application/json,.json" hidden /></div>
+        <button type="button" class="modal-close" data-close="data-dialog" aria-label="关闭">×</button>
+      </div>
+    </dialog>
+  </body>
+</html>
