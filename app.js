@@ -32,7 +32,7 @@ function validState(value) {
   if (!value.teams.every((team, index) => team.id === index + 1 && typeof team.name === 'string' && team.name.trim().length > 0 && team.name.length <= 20)) return false;
   if (!value.events.every((event) => Number.isInteger(event.teamId) && event.teamId >= 1 && event.teamId <= 8 && Number.isInteger(event.delta) && event.delta !== 0 && Math.abs(event.delta) <= 999 && /^\d{4}-\d{2}-\d{2}$/.test(event.day) && Number.isFinite(event.at) && typeof event.id === 'string')) return false;
   if (value.mode !== undefined && !['group', 'individual'].includes(value.mode)) return false;
-  if (value.students !== undefined && (!Array.isArray(value.students) || value.students.length > 400 || !value.students.every((student) => typeof student.id === 'string' && student.id.length > 0 && Number.isInteger(student.teamId) && student.teamId >= 1 && student.teamId <= 8 && typeof student.name === 'string' && student.name.trim().length > 0 && student.name.length <= 20) || new Set(value.students.map((student) => student.id)).size !== value.students.length)) return false;
+  if (value.students !== undefined && (!Array.isArray(value.students) || value.students.length > 400 || !value.students.every((student) => typeof student.id === 'string' && student.id.length > 0 && Number.isInteger(student.teamId) && student.teamId >= 1 && student.teamId <= 8 && typeof student.name === 'string' && student.name.trim().length > 0 && student.name.length <= 20 && (student.slot === undefined || student.slot === null || Number.isInteger(student.slot) && student.slot >= 1 && student.slot <= 6)) || new Set(value.students.map((student) => student.id)).size !== value.students.length)) return false;
   if (!value.events.every((event) => (event.studentId === undefined || typeof event.studentId === 'string') && (event.studentName === undefined || typeof event.studentName === 'string' && event.studentName.length <= 20))) return false;
   if (!value.awards || typeof value.awards !== 'object' || Array.isArray(value.awards)) return false;
   if (!Object.values(value.awards).every((name) => typeof name === 'string' && name.length <= 200)) return false;
@@ -41,7 +41,20 @@ function validState(value) {
 }
 
 function normalizeState(value) {
-  return { ...value, students: value.students || [], mode: value.mode || 'group' };
+  const usedSlots = Array.from({ length: 8 }, () => new Set());
+  const students = (value.students || []).map((student) => ({ ...student }));
+  for (const student of students) {
+    const used = usedSlots[student.teamId - 1];
+    if (Number.isInteger(student.slot) && !used.has(student.slot)) used.add(student.slot);
+    else student.slot = null;
+  }
+  for (const student of students) {
+    if (student.slot) continue;
+    const used = usedSlots[student.teamId - 1];
+    student.slot = Array.from({ length: 6 }, (_, index) => index + 1).find((number) => !used.has(number)) || null;
+    if (student.slot) used.add(student.slot);
+  }
+  return { ...value, students, mode: value.mode || 'group' };
 }
 
 let state;
@@ -69,13 +82,13 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 2500);
 }
 
-function commit(change) {
+function commit(change, renderPage = true) {
   const next = structuredClone(state);
   change(next);
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     state = next;
-    render();
+    if (renderPage) render();
     return true;
   } catch {
     showToast('保存失败，请先下载备份并检查浏览器存储空间');
@@ -113,6 +126,31 @@ function teamName(id) { return state.teams.find((team) => team.id === id)?.name 
 function eventLabel(event) { return `${teamName(event.teamId)}${event.studentName ? ` · ${event.studentName}` : ''}`; }
 function newId() { return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`; }
 
+function studentContribution(studentId) {
+  return state.events.reduce((total, event) => total + (event.studentId === studentId ? event.delta : 0), 0);
+}
+
+function saveStudentName(input) {
+  const teamId = Number(input.dataset.studentNameTeam);
+  const slot = Number(input.dataset.studentSlot);
+  if (!Number.isInteger(teamId) || teamId < 1 || teamId > 8 || !Number.isInteger(slot) || slot < 1 || slot > 6) return null;
+  const name = input.value.trim();
+  if (name.length > 20) return null;
+  const previous = state.students.find((student) => student.teamId === teamId && student.slot === slot);
+  if ((previous?.name || '') !== name && !commit((next) => {
+    const existing = next.students.find((student) => student.teamId === teamId && student.slot === slot);
+    if (!name) next.students = next.students.filter((student) => student !== existing);
+    else if (existing) existing.name = name;
+    else next.students.push({ id: newId(), teamId, slot, name });
+  }, false)) return null;
+  const student = state.students.find((item) => item.teamId === teamId && item.slot === slot) || null;
+  input.value = name;
+  const roster = input.closest('.student-roster');
+  roster?.querySelector('.student-roster-head span')?.replaceChildren(document.createTextNode(`组内同学 · ${state.students.filter((item) => item.teamId === teamId && item.slot).length}/6 人`));
+  input.closest('.student-row')?.querySelector('.student-contribution')?.replaceChildren(document.createTextNode(student ? `个人 ${signed(studentContribution(student.id))}` : ''));
+  return student;
+}
+
 function addPoints(teamId, delta, studentId = null) {
   if (!Number.isInteger(delta) || delta === 0 || Math.abs(delta) > 999) return;
   const student = studentId ? state.students.find((item) => item.id === studentId && item.teamId === teamId) : null;
@@ -130,15 +168,22 @@ function renderDate() {
 
 function renderTeamActions(team) {
   const members = state.students.filter((student) => student.teamId === team.id);
-  const rosterHead = `<div class="student-roster-head"><span>组内同学 · ${members.length} 人</span><button type="button" data-roster="${team.id}" aria-label="设置${escapeHtml(team.name)}的同学名单">设置名单</button></div>`;
+  const visibleMembers = members.filter((student) => Number.isInteger(student.slot) && student.slot >= 1 && student.slot <= 6);
+  const overflow = members.length - visibleMembers.length;
+  const rosterCount = `组内同学 · ${visibleMembers.length}/6 人`;
+  const overflowNotice = overflow ? `<div class="student-overflow">旧名单还有 ${overflow} 人超出上限，<button type="button" data-roster="${team.id}">整理名单</button></div>` : '';
   if (state.mode === 'individual') {
-    const contributions = new Map(members.map((student) => [student.id, 0]));
+    const contributions = new Map(visibleMembers.map((student) => [student.id, 0]));
     for (const event of state.events) {
       if (event.studentId && contributions.has(event.studentId)) contributions.set(event.studentId, contributions.get(event.studentId) + event.delta);
     }
-    return `<div class="student-roster">${rosterHead}${members.length ? members.map((student) => `<div class="student-row"><span class="student-name">${escapeHtml(student.name)}</span><span class="student-contribution">个人 ${signed(contributions.get(student.id))}</span><button type="button" data-student="${escapeHtml(student.id)}" data-student-team="${team.id}" aria-label="${escapeHtml(student.name)}为${escapeHtml(team.name)}加1分">＋1</button></div>`).join('') : '<div class="student-empty">还没有同学名单，请点“设置名单”</div>'}</div>`;
+    return `<div class="student-roster"><div class="student-roster-head"><span>${rosterCount}</span></div>${Array.from({ length: 6 }, (_, index) => {
+      const slot = index + 1;
+      const student = visibleMembers.find((item) => item.slot === slot);
+      return `<div class="student-row"><span class="student-slot-number">${slot}</span><input class="student-name-input" type="text" data-student-name-team="${team.id}" data-student-slot="${slot}" value="${escapeHtml(student?.name || '')}" maxlength="20" autocomplete="off" placeholder="填写姓名" aria-label="${escapeHtml(team.name)}第${slot}位同学姓名"><span class="student-contribution">${student ? `个人 ${signed(contributions.get(student.id))}` : ''}</span><button type="button" data-slot-score="${team.id}" data-slot="${slot}" aria-label="${escapeHtml(team.name)}第${slot}位同学加1分">＋1</button></div>`;
+    }).join('')}${overflowNotice}</div>`;
   }
-  return `<div class="team-bottom"><div class="score-actions">${Array.from({ length: 6 }, (_, i) => `<button type="button" class="score-button plus" data-score="${team.id}" data-delta="${i + 1}" aria-label="${escapeHtml(team.name)}加${i + 1}分">＋${i + 1}</button>`).join('')}<button type="button" class="score-button minus" data-score="${team.id}" data-delta="-1" aria-label="${escapeHtml(team.name)}减1分">－1</button></div><div class="more-actions"><button type="button" data-custom="${team.id}" data-custom-sign="plus" aria-label="${escapeHtml(team.name)}加多分">＋ 加多分</button><button type="button" data-custom="${team.id}" data-custom-sign="minus" aria-label="${escapeHtml(team.name)}减多分">－ 减多分</button></div></div><div class="student-roster student-roster-compact">${rosterHead}${members.length ? `<div class="student-name-list">${members.map((student) => `<span>${escapeHtml(student.name)}</span>`).join('')}</div>` : '<div class="student-empty">还没有同学名单，请点“设置名单”</div>'}</div>`;
+  return `<div class="team-bottom"><div class="score-actions">${Array.from({ length: 6 }, (_, i) => `<button type="button" class="score-button plus" data-score="${team.id}" data-delta="${i + 1}" aria-label="${escapeHtml(team.name)}加${i + 1}分">＋${i + 1}</button>`).join('')}<button type="button" class="score-button minus" data-score="${team.id}" data-delta="-1" aria-label="${escapeHtml(team.name)}减1分">－1</button></div><div class="more-actions"><button type="button" data-custom="${team.id}" data-custom-sign="plus" aria-label="${escapeHtml(team.name)}加多分">＋ 加多分</button><button type="button" data-custom="${team.id}" data-custom-sign="minus" aria-label="${escapeHtml(team.name)}减多分">－ 减多分</button></div></div><div class="student-roster student-roster-compact"><div class="student-roster-head"><span>${rosterCount}</span><button type="button" data-mode="individual">${visibleMembers.length ? '编辑名单' : '填写名单'}</button></div>${visibleMembers.length ? `<div class="student-name-list">${visibleMembers.sort((a, b) => a.slot - b.slot).map((student) => `<span>${escapeHtml(student.name)}</span>`).join('')}</div>` : '<div class="student-empty">切换到精细模式填写姓名</div>'}${overflowNotice}</div>`;
 }
 
 function renderScore(totals, ranked) {
@@ -202,10 +247,17 @@ document.addEventListener('click', (event) => {
   if (target.dataset.go) switchTab(target.dataset.go);
   if (target.dataset.mode && target.dataset.mode !== state.mode) commit((next) => { next.mode = target.dataset.mode; });
   if (target.dataset.score) addPoints(Number(target.dataset.score), Number(target.dataset.delta));
-  if (target.dataset.student) addPoints(Number(target.dataset.studentTeam), 1, target.dataset.student);
+  if (target.dataset.slotScore) {
+    const input = target.closest('.student-row')?.querySelector('.student-name-input');
+    if (!input?.value.trim()) showToast('请先填写这位同学的姓名');
+    else {
+      const student = saveStudentName(input);
+      if (student) addPoints(Number(target.dataset.slotScore), 1, student.id);
+    }
+  }
   if (target.dataset.roster) {
     currentTeamId = Number(target.dataset.roster);
-    $('#roster-dialog-hint').textContent = `${teamName(currentTeamId)} · 每行填写一位同学`;
+    $('#roster-dialog-hint').textContent = `${teamName(currentTeamId)} · 最多保留 6 位同学`;
     $('#roster-input').value = state.students.filter((student) => student.teamId === currentTeamId).map((student) => student.name).join('\n');
     openDialog('roster-dialog');
   }
@@ -245,6 +297,25 @@ document.addEventListener('click', (event) => {
   }
 });
 
+document.addEventListener('input', (event) => {
+  if (event.target.matches?.('.student-name-input') && !event.isComposing) saveStudentName(event.target);
+});
+
+document.addEventListener('change', (event) => {
+  if (event.target.matches?.('.student-name-input')) saveStudentName(event.target);
+});
+
+document.addEventListener('compositionend', (event) => {
+  if (event.target.matches?.('.student-name-input')) saveStudentName(event.target);
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.target.matches?.('.student-name-input') && event.key === 'Enter' && !event.isComposing) {
+    event.preventDefault();
+    event.target.blur();
+  }
+});
+
 function updateEditSignButtons() {
   document.querySelectorAll('[data-edit-sign]').forEach((button) => {
     button.classList.toggle('is-selected', button.dataset.editSign === (editSign === 1 ? 'plus' : 'minus'));
@@ -261,21 +332,17 @@ $('#name-form').addEventListener('submit', (event) => {
 $('#roster-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const names = $('#roster-input').value.split(/\r?\n/).map((name) => name.trim()).filter(Boolean);
-  if (names.length > 50 || names.some((name) => name.length > 20)) {
-    showToast('每组最多 50 人，每个姓名不超过 20 个字');
+  if (names.length > 6 || names.some((name) => name.length > 20)) {
+    showToast('每组最多 6 人，每个姓名不超过 20 个字');
     return;
   }
   const previous = state.students.filter((student) => student.teamId === currentTeamId);
   const used = new Set();
-  const members = names.map((name) => {
+  const members = names.map((name, index) => {
     const retained = previous.find((student) => student.name === name && !used.has(student.id));
     if (retained) used.add(retained.id);
-    return retained || { id: newId(), teamId: currentTeamId, name };
+    return { ...(retained || { id: newId(), teamId: currentTeamId }), name, slot: index + 1 };
   });
-  if (state.students.length - previous.length + members.length > 400) {
-    showToast('全部小组的名单最多 400 人');
-    return;
-  }
   if (commit((next) => { next.students = next.students.filter((student) => student.teamId !== currentTeamId).concat(members); })) {
     closeDialog('roster-dialog');
     showToast(`${teamName(currentTeamId)}的名单已保存`);
